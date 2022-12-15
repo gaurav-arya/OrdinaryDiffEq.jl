@@ -375,7 +375,7 @@ function Base.:*(W::WOperator, x::AbstractVecOrMat)
     if W.transform
         (W.mass_matrix * x) / -W.gamma + W.J * x
     else
-        -W.mass_matrix * x + W.gamma * (W.J * x)
+        -W.mass_matrix * x + W.gamma * (W.J * x) # why is this negated from the docstring?
     end
 end
 function Base.:*(W::WOperator, x::Number)
@@ -869,10 +869,14 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
     # TODO - make mass matrix a SciMLOperator so it can be updated with time. Default to IdentityOperator
     # @info "building J and W"
     islin, isode = islinearfunction(f, alg)
-    if f.jac_prototype isa Union{DiffEqBase.AbstractDiffEqLinearOperator, SciMLOperators.AbstractSciMLOperator}
+    if f.Wfact_prototype === nothing && 
+        f.jac_prototype isa Union{DiffEqBase.AbstractDiffEqLinearOperator, SciMLOperators.AbstractSciMLOperator}
         W = WOperator{IIP}(f, u, dt)
         # interesting case here! but won't support a split function?
         J = W.J # J will be a DiffEqLinearOperator
+    elseif f.Wfact_prototype isa SciMLOperators.AbstractSciMLOperator
+        W = f.Wfact_prototype
+        J = f.jac_prototype # hacky just to get my use case working
     elseif IIP && f.jac_prototype !== nothing && concrete_jac(alg) === nothing &&
            (alg.linsolve === nothing ||
             alg.linsolve !== nothing &&
