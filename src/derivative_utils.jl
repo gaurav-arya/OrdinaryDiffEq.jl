@@ -704,7 +704,7 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
         W.transform = W_transform
         set_gamma!(W, dtgamma)
         if W.J !== nothing && !(W.J isa SparseDiffTools.JacVec) &&
-           !(W.J isa SciMLBase.AbstractDiffEqLinearOperator)
+           !(W.J isa Union{SciMLBase.AbstractDiffEqLinearOperator, SciMLOperators.AbstractSciMLOperator})
             islin, isode = islinearfunction(integrator)
             islin ? (J = isode ? f.f : f.f1.f) :
             (new_jac && (calc_J!(W.J, integrator, lcache, next_step)))
@@ -859,7 +859,7 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
     # TODO - if jvp given, make it SciMLOperators.FunctionOperator
     # TODO - make mass matrix a SciMLOperator so it can be updated with time. Default to IdentityOperator
     islin, isode = islinearfunction(f, alg)
-    if f.jac_prototype isa DiffEqBase.AbstractDiffEqLinearOperator
+    if f.jac_prototype isa Union{DiffEqBase.AbstractDiffEqLinearOperator, SciMLOperators.AbstractSciMLOperator}
         W = WOperator{IIP}(f, u, dt)
         J = W.J
     elseif IIP && f.jac_prototype !== nothing && concrete_jac(alg) === nothing &&

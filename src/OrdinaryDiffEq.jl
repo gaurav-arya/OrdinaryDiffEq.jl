@@ -93,6 +93,8 @@ import ArrayInterfaceStaticArrays, ArrayInterfaceGPUArrays
 import FunctionWrappersWrappers
 import Preferences
 
+import SciMLOperators
+
 DEFAULT_PRECS(W, du, u, p, t, newW, Plprev, Prprev, solverdata) = nothing, nothing
 
 include("misc_utils.jl")
