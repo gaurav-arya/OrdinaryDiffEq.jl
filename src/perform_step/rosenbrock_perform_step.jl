@@ -44,7 +44,7 @@ end
         integrator.destats.nf += 1
     end
 
-    new_W = calc_rosenbrock_differentiation!(integrator, cache, γ, γ, repeat_step, false)
+    new_W = calc_rosenbrock_differentiation!(integrator, cache, γ, γ, repeat_step, false) # not used? because mutated
 
     calculate_residuals!(weight, fill!(weight, one(eltype(u))), uprev, uprev,
                          integrator.opts.abstol, integrator.opts.reltol,
@@ -160,7 +160,7 @@ end
     else
         linres = dolinsolve(integrator, cache.linsolve; A = W, b = _vec(linsolve_tmp),
                             du = integrator.fsalfirst, u = u, p = p, t = t, weight = weight,
-                            solverdata = (; gamma = γ))
+                            solverdata = (; gamma = γ)) # W matrix provided to linsolve here
     end
 
     @inbounds @simd ivdep for i in eachindex(u)
@@ -1465,7 +1465,7 @@ end
     # Time derivative
     dT = calc_tderivative(integrator, cache)
 
-    W = calc_W(integrator, cache, dtgamma, repeat_step, true)
+    W = calc_W(integrator, cache, dtgamma, repeat_step, true) # W calculated out of place here.
     if !issuccess_W(W)
         integrator.EEst = 2
         return nothing

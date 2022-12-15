@@ -106,7 +106,7 @@ function dolinsolve(integrator, linsolve; A = nothing, linu = nothing, b = nothi
     end
 
     linres = if reltol === nothing
-        solve(linsolve; reltol)
+        solve(linsolve; reltol) # what's the point of this if?
     else
         solve(linsolve; reltol)
     end

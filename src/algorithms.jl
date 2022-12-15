@@ -4430,6 +4430,7 @@ for Alg in [
     :Rodas5P,
 ]
     @eval begin
+        # struct is defined here
         struct $Alg{CS, AD, F, P, FDT, ST, CJ} <:
                OrdinaryDiffEqRosenbrockAdaptiveAlgorithm{CS, AD, FDT, ST, CJ}
             linsolve::F

@@ -156,7 +156,7 @@ function calc_J!(J, integrator, cache, next_step::Bool = false)
         end
     else
         if DiffEqBase.has_jac(f)
-            f.jac(J, uprev, p, t)
+            f.jac(J, uprev, p, t) # jacobian called here
         else
             @unpack du1, uf, jac_config = cache
 
@@ -166,7 +166,7 @@ function calc_J!(J, integrator, cache, next_step::Bool = false)
                 uf.p = p
             end
 
-            jacobian!(J, uf, uprev, du1, integrator, jac_config)
+            jacobian!(J, uf, uprev, du1, integrator, jac_config) # jacobian manually filled here
         end
     end
 
@@ -491,7 +491,7 @@ function do_newJW(integrator, alg, nlsolver, repeat_step)::NTuple{2, Bool}
     return jbad, (is_varying_mm || jbad || wbad)
 end
 
-@noinline _throwWJerror(W, J) = throw(DimensionMismatch("W: $(axes(W)), J: $(axes(J))"))
+@noinline _throwWJerror(W, J) = throw(DimensionMismatch("W: $(axes(W)), J: $(axes(J))"))typeof(W)
 @noinline function _throwWMerror(W, mass_matrix)
     throw(DimensionMismatch("W: $(axes(W)), mass matrix: $(axes(mass_matrix))"))
 end
@@ -648,6 +648,8 @@ end
 function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cache, dtgamma,
                  repeat_step, W_transform = false, newJW = nothing)
     @unpack t, dt, uprev, u, f, p = integrator
+    # @info "calculating W." typeof(W)
+    # @info "f is a split function: $(f isa SplitFunction)" 
     lcache = nlsolver === nothing ? cache : nlsolver.cache
     next_step = is_always_new(nlsolver)
     if next_step
@@ -676,11 +678,14 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
         f.Wfact(W, u, p, dtgamma, t)
         isnewton(nlsolver) && set_W_γdt!(nlsolver, dtgamma)
         if is_compos
-            opn = opnorm(LowerTriangular(W), Inf)
+            opn = opnorm(LowerTriangular(W), Inf) # this won't be good for matrix free
             integrator.eigen_est = (constvalue(opn) + one(opn)) / dtgamma # TODO: better estimate
         end
         return (true, false)
     end
+
+    # @info "didn't use Wfact"
+    # option 1: provide Wfact, which would mutate the WOperator.
 
     # check if we need to update J or W
     if newJW === nothing
@@ -688,8 +693,10 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
     else
         new_jac, new_W = newJW
     end
+    # @info "need to update?" new_jac new_W
 
     if new_jac && isnewton(lcache)
+        # @info "lcache newton"
         lcache.J_t = t
         if isdae
             lcache.uf.α = nlsolver.α
@@ -800,6 +807,7 @@ end
 
 function calc_rosenbrock_differentiation!(integrator, cache, dtd1, dtgamma, repeat_step,
                                           W_transform)
+    # @info "doing rosenbrock differentiation"
     nlsolver = nothing
     # we need to skip calculating `J` and `W` when a step is repeated
     new_jac = new_W = false
@@ -807,7 +815,7 @@ function calc_rosenbrock_differentiation!(integrator, cache, dtd1, dtgamma, repe
         new_jac, new_W = calc_W!(cache.W, integrator, nlsolver, cache, dtgamma, repeat_step,
                                  W_transform)
     end
-    # If the Jacobian is not updated, we won't have to update ∂/∂t either.
+    # If the Jacobian is not updated, we won't have to update ∂/∂t eithero
     calc_tderivative!(integrator, cache, dtd1, repeat_step || !new_jac)
     return new_W
 end
@@ -853,15 +861,18 @@ function update_W!(nlsolver::AbstractNLSolver,
     nothing
 end
 
+# J and W are built here using jac prototype?
 function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
                    ::Val{IIP}) where {IIP, uEltypeNoUnits, F}
     # TODO - make J, W AbstractSciMLOperators (lazily defined with scimlops functionality)
     # TODO - if jvp given, make it SciMLOperators.FunctionOperator
     # TODO - make mass matrix a SciMLOperator so it can be updated with time. Default to IdentityOperator
+    # @info "building J and W"
     islin, isode = islinearfunction(f, alg)
     if f.jac_prototype isa Union{DiffEqBase.AbstractDiffEqLinearOperator, SciMLOperators.AbstractSciMLOperator}
         W = WOperator{IIP}(f, u, dt)
-        J = W.J
+        # interesting case here! but won't support a split function?
+        J = W.J # J will be a DiffEqLinearOperator
     elseif IIP && f.jac_prototype !== nothing && concrete_jac(alg) === nothing &&
            (alg.linsolve === nothing ||
             alg.linsolve !== nothing &&

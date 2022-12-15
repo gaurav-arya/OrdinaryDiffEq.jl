@@ -1,3 +1,5 @@
+__precompile__(false)
+
 """
 $(DocStringExtensions.README)
 """
@@ -61,7 +63,7 @@ using DiffEqBase: check_error!, @def, _vec, _reshape
 
 using FastBroadcast: @.., True, False
 
-using SciMLBase: NoInit, _unwrap_val
+using SciMLBase: NoInit, _unwrap_val 
 
 import DiffEqBase: calculate_residuals, calculate_residuals!, unwrap_cache,
                    @tight_loop_macros,

@@ -79,13 +79,13 @@ function alg_cache(alg::Rosenbrock23, u, rate_prototype, ::Type{uEltypeNoUnits},
     fsalfirst = zero(rate_prototype)
     fsallast = zero(rate_prototype)
     dT = zero(rate_prototype)
-    J, W = build_J_W(alg, u, uprev, p, t, dt, f, uEltypeNoUnits, Val(true))
+    J, W = build_J_W(alg, u, uprev, p, t, dt, f, uEltypeNoUnits, Val(true)) # J and W are built here
     tmp = zero(rate_prototype)
     atmp = similar(u, uEltypeNoUnits)
     recursivefill!(atmp, false)
     weight = similar(u, uEltypeNoUnits)
     recursivefill!(weight, false)
-    tab = Rosenbrock23Tableau(constvalue(uBottomEltypeNoUnits))
+    tab = Rosenbrock23Tableau(constvalue(uBottomEltypeNoUnits)) # tableau is set here
     tf = TimeGradientWrapper(f, uprev, p)
     uf = UJacobianWrapper(f, t, p)
     linsolve_tmp = zero(rate_prototype)
@@ -94,7 +94,7 @@ function alg_cache(alg::Rosenbrock23, u, rate_prototype, ::Type{uEltypeNoUnits},
     Pl, Pr = wrapprecs(alg.precs(W, nothing, u, p, t, nothing, nothing, nothing,
                                  nothing)..., weight)
     linsolve = init(linprob, alg.linsolve, alias_A = true, alias_b = true,
-                    Pl = Pl, Pr = Pr)
+                    Pl = Pl, Pr = Pr) # linsolve created, based on alg's linsolve
 
     grad_config = build_grad_config(alg, f, tf, du1, t)
     jac_config = build_jac_config(alg, f, uf, du1, uprev, u, tmp, du2, Val(false))
@@ -397,7 +397,7 @@ end
 
 ### ROS34PW methods
 
-@ROS34PW(:cache)
+@ROS34PW(:cache) # the method I care about!
 
 ################################################################################
 
