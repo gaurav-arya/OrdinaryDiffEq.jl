@@ -245,6 +245,9 @@ function DiffEqBase.prepare_alg(alg::Union{
                (prob.f.mass_matrix === nothing ||
                 (prob.f.mass_matrix !== nothing &&
                  !(typeof(prob.f.jac_prototype) <: SciMLBase.AbstractDiffEqOperator)))
+            # why are we doing this here, based on jac_prototype?
+            # this won't play nicely with W_prototype.
+            # why don't we wait until the LinearSolve is initialized to do the polyalg
             linsolve = LinearSolve.defaultalg(prob.f.jac_prototype, u0) # linsolve algorithm chosen here
         else
             # If mm is a sparse matrix and A is a DiffEqArrayOperator, then let linear
