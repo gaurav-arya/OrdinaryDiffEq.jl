@@ -366,6 +366,7 @@ function Base.:\(W::WOperator, x::AbstractVecOrMat)
     if size(W) == () # scalar operator
         convert(Number, W) \ x
     else
+        println("concretizing and inverting W")
         convert(AbstractMatrix, W) \ x # G: so currently, when W is inverted, it is always converted to an abstract matrix.
     end
 end
@@ -418,18 +419,25 @@ function make_Wop(mass_matrix, dtgamma, J, uprev, jacvec=nothing; transform = fa
     # TODO: concretize if possible
     # TOOD: should we make use of jacvec?
     # also, if returned as MatrixOperator, make sure LinearSolve does a direct solve if possible / unwraps it.
-    # return WOperator{_unwrap_val(iip)}(mass_matrix, dtgamma, J, uprev, jacvec; transform)
+    W1 = WOperator{_unwrap_val(iip)}(mass_matrix, dtgamma, J, uprev, jacvec; transform)
     gamma_op = ScalarOperator(dtgamma; update_func=(old_op, u, p, t; dtgamma) -> dtgamma, accepted_kwargs=(:dtgamma,))
     # thread the transform boolean through, to be a little safe about type stability given transform is a Bool 
-    transform_op = ScalarOperator(dtgamma; update_func=(old_op, u, p, t; dtgamma) -> transform ? inv(dtgamma) : one(dtgamma), accepted_kwargs=(:dtgamma,))
+    get_transform(dtgamma, transform) = transform ? inv(dtgamma) : one(dtgamma)
+    transform_op = ScalarOperator(get_transform(dtgamma, transform); 
+                                  update_func = (old_op, u, p, t; dtgamma, transform) -> get_transform(dtgamma, transform), 
+                                  accepted_kwargs=(:dtgamma, :transform))
     _J = if J isa AbstractMatrix
-        MatrixOperator(J)
+        MatrixOperator(J) # G: does this neglect jac?
     elseif J isa AbstractSciMLOperator
         J
     else
         error("Jacobian J is of unexpected type $(typeof(J))")
     end
-    return -(mass_matrix - gamma_op * _J)# * transform_op 
+    W2 = -(mass_matrix - gamma_op * _J) * transform_op 
+    # v = rand(size(W1)[1])
+    # @show W1 * v
+    # @show W2 * v 
+    return W2
 end
 
 """
@@ -640,7 +648,7 @@ function jacobian2W(mass_matrix::MT, dtgamma::Number, J::AbstractMatrix,
 end
 
 function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cache, dtgamma,
-    repeat_step, W_transform = false, newJW = nothing)
+    repeat_step, W_transform = false, newJW = nothing) # wow, W_transform can change here too?
     @unpack t, dt, uprev, u, f, p = integrator
     lcache = nlsolver === nothing ? cache : nlsolver.cache
     next_step = is_always_new(nlsolver)
@@ -693,7 +701,7 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
     end
 
     # calculate W
-    @show isnewton(nlsolver)
+    # @show isnewton(nlsolver)
     if W isa WOperator
         isnewton(nlsolver) || update_coefficients!(W, uprev, p, t) # we will call `update_coefficients!` in NLNewton. Ok, this is a clue...
         W.transform = W_transform
@@ -706,7 +714,7 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
                 jacobian2W!(W._concrete_form, mass_matrix, dtgamma, J, W_transform)
         end
     elseif W isa AbstractSciMLOperator
-        update_coefficients!(W, uprev, p, t; dtgamma)
+        update_coefficients!(W, uprev, p, t; dtgamma, transform=W_transform)
     else # concrete W using jacobian from `calc_J!`
         # is this branch ever meant to be hit??
         islin, isode = islinearfunction(integrator)
@@ -853,7 +861,7 @@ end
 function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
     ::Val{IIP}) where {IIP, uEltypeNoUnits, F}
     # TODO - make J, W AbstractSciMLOperators (lazily defined with scimlops functionality)
-    # TODO - if jvp given, make it SciMLOperators.FunctionOperator
+    # TODO - if jvp given, make it SciMLOperators.FunctionOperator <- G: do this in SciMLBase? maybe not, better to just wrap it here... 
     # TODO - make mass matrix a SciMLOperator so it can be updated with time. Default to IdentityOperator
     islin, isode = islinearfunction(f, alg)
     if f.jac_prototype isa AbstractSciMLOperator
