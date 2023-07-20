@@ -18,6 +18,8 @@ end
 isinv(W::StaticWOperator{S}) where {S} = S
 Base.:\(W::StaticWOperator, v::AbstractArray) = isinv(W) ? W.W * v : W.W \ v
 
+make_StaticWOperator(W, callinv = true) = StaticWOperator(W, callinv)
+
 function calc_tderivative!(integrator, cache, dtd1, repeat_step)
     @inbounds begin
         @unpack t, dt, uprev, u, f, p = integrator
@@ -363,7 +365,7 @@ function Base.:\(W::WOperator, x::AbstractVecOrMat)
     if size(W) == () # scalar operator
         convert(Number, W) \ x
     else
-        convert(AbstractMatrix, W) \ x
+        convert(AbstractMatrix, W) \ x # G: so currently, when W is inverted, it is always converted to an abstract matrix.
     end
 end
 function Base.:\(W::WOperator, x::Number)
@@ -409,6 +411,14 @@ function LinearAlgebra.mul!(Y::AbstractVecOrMat, W::WOperator, B::AbstractVecOrM
         # Add result
         axpby!(W.gamma, _vec(W._func_cache), -one(W.gamma), _vec(Y))
     end
+end
+
+function make_WOperator(f, u, gamma; transform = false, iip)
+    return WOperator{_unwrap_val(iip)}(f, u, gamma; transform)
+end
+
+function make_WOperator(mass_matrix, dtgamma, J, uprev, jacvec=nothing; transform = false, iip)
+    return WOperator{_unwrap_val(iip)}(mass_matrix, dtgamma, J, uprev, jacvec; transform)
 end
 
 """
@@ -726,7 +736,7 @@ end
 
     if islin
         J = isode ? f.f : f.f1.f # unwrap the Jacobian accordingly
-        W = WOperator{false}(mass_matrix, dtgamma, J, uprev; transform = W_transform)
+        W = make_WOperator(mass_matrix, dtgamma, J, uprev; transform = W_transform, iip = Val{false}())
     elseif DiffEqBase.has_jac(f)
         J = f.jac(uprev, p, t)
         if typeof(J) <: StaticArray &&
@@ -739,8 +749,7 @@ end
                 nlsolver.cache.W.J isa AbstractSciMLOperator)
                 J = MatrixOperator(J)
             end
-            W = WOperator{false}(mass_matrix, dtgamma, J, uprev, cache.W.jacvec;
-                transform = W_transform)
+            W = make_WOperator(mass_matrix, dtgamma, J, uprev, cache.W.jacvec; transform = W_transform, iip = Val{false}())
         end
         integrator.stats.nw += 1
     else
@@ -757,7 +766,7 @@ end
             elseif len !== nothing &&
                    typeof(integrator.alg) <:
                    Union{Rosenbrock23, Rodas4, Rodas4P, Rodas4P2, Rodas5, Rodas5P}
-                StaticWOperator(W_full)
+                make_StaticWOperator(W_full)
             else
                 DiffEqBase.default_factorize(W_full)
             end
@@ -832,7 +841,7 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
     # TODO - make mass matrix a SciMLOperator so it can be updated with time. Default to IdentityOperator
     islin, isode = islinearfunction(f, alg)
     if f.jac_prototype isa AbstractSciMLOperator
-        W = WOperator{IIP}(f, u, dt)
+        W = make_WOperator(f, u, dt; iip=Val{IIP}())
         J = W.J
     elseif IIP && f.jac_prototype !== nothing && concrete_jac(alg) === nothing &&
            (alg.linsolve === nothing ||
@@ -853,7 +862,7 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
         jacvec = JacVec(UJacobianWrapper(_f, t, p), copy(u), p, t;
             autodiff = alg_autodiff(alg), tag = OrdinaryDiffEqTag())
         J = jacvec
-        W = WOperator{IIP}(f.mass_matrix, dt, J, u, jacvec)
+        W = make_WOperator(f.mass_matrix, dt, J, u, jacvec; iip=Val{IIP}())
 
     elseif alg.linsolve !== nothing && !LinearSolve.needs_concrete_A(alg.linsolve) ||
            concrete_jac(alg) !== nothing && concrete_jac(alg)
@@ -868,14 +877,14 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
         end
         jacvec = JacVec(UJacobianWrapper(_f, t, p), copy(u), p, t;
             autodiff = alg_autodiff(alg), tag = OrdinaryDiffEqTag())
-        W = WOperator{IIP}(f.mass_matrix, dt, J, u, jacvec)
+        W = make_WOperator(f.mass_matrix, dt, J, u, jacvec; iip=Val{IIP}())
 
     elseif islin || (!IIP && DiffEqBase.has_jac(f))
         J = islin ? (isode ? f.f : f.f1.f) : f.jac(uprev, p, t) # unwrap the Jacobian accordingly
         if !isa(J, AbstractSciMLOperator)
             J = MatrixOperator(J)
         end
-        W = WOperator{IIP}(f.mass_matrix, dt, J, u)
+        W = make_WOperator(f.mass_matrix, dt, J, u; iip=Val{IIP}())
     else
         J = if f.jac_prototype === nothing
             ArrayInterface.undefmatrix(u)
@@ -892,7 +901,7 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
             if len !== nothing &&
                typeof(alg) <:
                Union{Rosenbrock23, Rodas4, Rodas4P, Rodas4P2, Rodas5, Rodas5P}
-                StaticWOperator(J, false)
+                make_StaticWOperator(J, false)
             else
                 ArrayInterface.lu_instance(J)
             end
