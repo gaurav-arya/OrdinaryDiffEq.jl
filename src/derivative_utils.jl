@@ -200,7 +200,7 @@ mutable struct WOperator{IIP, T,
     _concrete_form::C        # non-lazy form (matrix/number) of the operator. G: this gives us a clue how to handle concretized composeed ops that support updating of constituents.
     jacvec::JV
 
-    function WOperator{IIP}(mass_matrix, gamma, J, u, jacvec = nothing;
+    function WOperator{IIP}(mass_matrix, gamma, J, u;
         transform = false) where {IIP}
         # TODO: there is definitely a missing interface.
         # Tentative interface: `has_concrete` and `concertize(A)`
@@ -415,11 +415,11 @@ function LinearAlgebra.mul!(Y::AbstractVecOrMat, W::WOperator, B::AbstractVecOrM
     end
 end
 
-function make_Wop(mass_matrix, dtgamma, J, uprev, jacvec=nothing; transform = false, iip)
+function make_Wop(mass_matrix, dtgamma, J, uprev; transform = false, iip)
     # TODO: concretize if possible
     # TOOD: should we make use of jacvec?
     # also, if returned as MatrixOperator, make sure LinearSolve does a direct solve if possible / unwraps it.
-    W1 = WOperator{_unwrap_val(iip)}(mass_matrix, dtgamma, J, uprev, jacvec; transform)
+    # W1 = WOperator{_unwrap_val(iip)}(mass_matrix, dtgamma, J, uprev, jacvec; transform)
     gamma_op = ScalarOperator(dtgamma; update_func=(old_op, u, p, t; dtgamma) -> dtgamma, accepted_kwargs=(:dtgamma,))
     # thread the transform boolean through, to be a little safe about type stability given transform is a Bool 
     get_transform(dtgamma, transform) = transform ? inv(dtgamma) : one(dtgamma)
@@ -434,10 +434,8 @@ function make_Wop(mass_matrix, dtgamma, J, uprev, jacvec=nothing; transform = fa
         error("Jacobian J is of unexpected type $(typeof(J))")
     end
     W2 = -(mass_matrix - gamma_op * _J) * transform_op 
-    # v = rand(size(W1)[1])
-    # @show W1 * v
-    # @show W2 * v 
-    return W2
+    W = cache_operator(W2, uprev)
+    return W
 end
 
 """
@@ -769,11 +767,13 @@ end
             W = W_transform ? J - mass_matrix * inv(dtgamma) :
                 dtgamma * J - mass_matrix
         else
+            # G: what's going on here? We're lazily making the W operator right here?
+            # should we really use OOP update_coefficients?
             if !isa(J, AbstractSciMLOperator) && (!isnewton(nlsolver) ||
                 nlsolver.cache.W.J isa AbstractSciMLOperator)
                 J = MatrixOperator(J)
             end
-            W = make_Wop(mass_matrix, dtgamma, J, uprev, cache.W.jacvec; transform = W_transform, iip = Val{false}())
+            W = make_Wop(mass_matrix, dtgamma, J, uprev; transform = W_transform, iip = Val{false}())
         end
         integrator.stats.nw += 1
     else
@@ -889,10 +889,9 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
         # be overridden with concrete_jac.
 
         _f = islin ? (isode ? f.f : f.f1.f) : f
-        jacvec = JacVec(UJacobianWrapper(_f, t, p), copy(u), p, t;
-            autodiff = alg_autodiff(alg), tag = OrdinaryDiffEqTag())
-        J = jacvec
-        W = make_Wop(f.mass_matrix, dt, J, u, jacvec; iip=Val{IIP}())
+        J = JacVec(UJacobianWrapper(_f, t, p), copy(u), p, t;
+            autodiff = alg_autodiff(alg), tag = OrdinaryDiffEqTag()) 
+        W = make_Wop(f.mass_matrix, dt, J, u; iip=Val{IIP}())
 
     elseif alg.linsolve !== nothing && !LinearSolve.needs_concrete_A(alg.linsolve) ||
            concrete_jac(alg) !== nothing && concrete_jac(alg)
@@ -905,9 +904,10 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
         else
             deepcopy(f.jac_prototype)
         end
-        jacvec = JacVec(UJacobianWrapper(_f, t, p), copy(u), p, t;
+        J_jacvec = JacVec(UJacobianWrapper(_f, t, p), copy(u), p, t;
             autodiff = alg_autodiff(alg), tag = OrdinaryDiffEqTag())
-        W = make_Wop(f.mass_matrix, dt, J, u, jacvec; iip=Val{IIP}())
+        # G: probably J does not need to be passed below? Let's work under that assumption.
+        W = make_Wop(f.mass_matrix, dt, J_jacvec, u; iip=Val{IIP}()) # G: here, in contrast to case above, J is allocated sep from jacvec.
 
     elseif islin || (!IIP && DiffEqBase.has_jac(f))
         J = islin ? (isode ? f.f : f.f1.f) : f.jac(uprev, p, t) # unwrap the Jacobian accordingly
