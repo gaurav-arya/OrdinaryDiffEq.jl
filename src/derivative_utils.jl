@@ -18,7 +18,7 @@ end
 isinv(W::StaticWOperator{S}) where {S} = S
 Base.:\(W::StaticWOperator, v::AbstractArray) = isinv(W) ? W.W * v : W.W \ v
 
-make_StaticWOperator(W, callinv = true) = StaticWOperator(W, callinv)
+make_static_Wop(W, callinv = true) = StaticWOperator(W, callinv)
 
 function calc_tderivative!(integrator, cache, dtd1, repeat_step)
     @inbounds begin
@@ -195,9 +195,9 @@ mutable struct WOperator{IIP, T,
     mass_matrix::MType
     gamma::GType
     J::JType
-    transform::Bool          # true => W = mm/gamma - J; false => W = mm - gamma*J
+    transform::Bool          # true => W = -mm/gamma + J; false => W = -mm + gamma*J
     _func_cache::F           # cache used in `mul!`
-    _concrete_form::C        # non-lazy form (matrix/number) of the operator
+    _concrete_form::C        # non-lazy form (matrix/number) of the operator. G: this gives us a clue how to handle concretized composeed ops that support updating of constituents.
     jacvec::JV
 
     function WOperator{IIP}(mass_matrix, gamma, J, u, jacvec = nothing;
@@ -312,6 +312,7 @@ function Base.convert(::Type{AbstractMatrix}, W::WOperator{IIP}) where {IIP}
     if !IIP
         # Allocating
         if W.transform
+            @show typeof(W._concrete_form)
             W._concrete_form = -W.mass_matrix / W.gamma + convert(AbstractMatrix, W.J)
         else
             W._concrete_form = -W.mass_matrix + W.gamma * convert(AbstractMatrix, W.J)
@@ -413,12 +414,22 @@ function LinearAlgebra.mul!(Y::AbstractVecOrMat, W::WOperator, B::AbstractVecOrM
     end
 end
 
-function make_WOperator(f, u, gamma; transform = false, iip)
-    return WOperator{_unwrap_val(iip)}(f, u, gamma; transform)
-end
-
-function make_WOperator(mass_matrix, dtgamma, J, uprev, jacvec=nothing; transform = false, iip)
-    return WOperator{_unwrap_val(iip)}(mass_matrix, dtgamma, J, uprev, jacvec; transform)
+function make_Wop(mass_matrix, dtgamma, J, uprev, jacvec=nothing; transform = false, iip)
+    # TODO: concretize if possible
+    # TOOD: should we make use of jacvec?
+    # also, if returned as MatrixOperator, make sure LinearSolve does a direct solve if possible / unwraps it.
+    # return WOperator{_unwrap_val(iip)}(mass_matrix, dtgamma, J, uprev, jacvec; transform)
+    gamma_op = ScalarOperator(dtgamma; update_func=(old_op, u, p, t; dtgamma) -> dtgamma, accepted_kwargs=(:dtgamma,))
+    # thread the transform boolean through, to be a little safe about type stability given transform is a Bool 
+    transform_op = ScalarOperator(dtgamma; update_func=(old_op, u, p, t; dtgamma) -> transform ? inv(dtgamma) : one(dtgamma), accepted_kwargs=(:dtgamma,))
+    _J = if J isa AbstractMatrix
+        MatrixOperator(J)
+    elseif J isa AbstractSciMLOperator
+        J
+    else
+        error("Jacobian J is of unexpected type $(typeof(J))")
+    end
+    return -(mass_matrix - gamma_op * _J)# * transform_op 
 end
 
 """
@@ -682,8 +693,9 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
     end
 
     # calculate W
+    @show isnewton(nlsolver)
     if W isa WOperator
-        isnewton(nlsolver) || update_coefficients!(W, uprev, p, t) # we will call `update_coefficients!` in NLNewton
+        isnewton(nlsolver) || update_coefficients!(W, uprev, p, t) # we will call `update_coefficients!` in NLNewton. Ok, this is a clue...
         W.transform = W_transform
         set_gamma!(W, dtgamma)
         if W.J !== nothing && !(W.J isa AbstractSciMLOperator)
@@ -693,7 +705,10 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
             new_W && !isdae &&
                 jacobian2W!(W._concrete_form, mass_matrix, dtgamma, J, W_transform)
         end
+    elseif W isa AbstractSciMLOperator
+        update_coefficients!(W, uprev, p, t; dtgamma)
     else # concrete W using jacobian from `calc_J!`
+        # is this branch ever meant to be hit??
         islin, isode = islinearfunction(integrator)
         islin ? (J = isode ? f.f : f.f1.f) :
         (new_jac && (calc_J!(J, integrator, lcache, next_step)))
@@ -701,6 +716,7 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
         new_W && !isdae && jacobian2W!(W, mass_matrix, dtgamma, J, W_transform)
     end
     if isnewton(nlsolver)
+        # what's going on here? more complications from this Newton solver...
         set_new_W!(nlsolver, new_W)
         if new_jac && isdae
             set_W_γdt!(nlsolver, nlsolver.α * inv(dtgamma))
@@ -713,7 +729,7 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
     return new_jac, new_W
 end
 
-@noinline function calc_W(integrator, nlsolver, dtgamma, repeat_step, W_transform = false)
+@noinline function calc_W(integrator, nlsolver, dtgamma, repeat_step, W_transform = false) # TODO: make W_transform a Val?
     @unpack t, uprev, p, f = integrator
 
     next_step = is_always_new(nlsolver)
@@ -736,7 +752,7 @@ end
 
     if islin
         J = isode ? f.f : f.f1.f # unwrap the Jacobian accordingly
-        W = make_WOperator(mass_matrix, dtgamma, J, uprev; transform = W_transform, iip = Val{false}())
+        W = make_Wop(mass_matrix, dtgamma, J, uprev; transform = W_transform, iip = Val{false}())
     elseif DiffEqBase.has_jac(f)
         J = f.jac(uprev, p, t)
         if typeof(J) <: StaticArray &&
@@ -749,7 +765,7 @@ end
                 nlsolver.cache.W.J isa AbstractSciMLOperator)
                 J = MatrixOperator(J)
             end
-            W = make_WOperator(mass_matrix, dtgamma, J, uprev, cache.W.jacvec; transform = W_transform, iip = Val{false}())
+            W = make_Wop(mass_matrix, dtgamma, J, uprev, cache.W.jacvec; transform = W_transform, iip = Val{false}())
         end
         integrator.stats.nw += 1
     else
@@ -766,7 +782,7 @@ end
             elseif len !== nothing &&
                    typeof(integrator.alg) <:
                    Union{Rosenbrock23, Rodas4, Rodas4P, Rodas4P2, Rodas5, Rodas5P}
-                make_StaticWOperator(W_full)
+                make_static_Wop(W_full)
             else
                 DiffEqBase.default_factorize(W_full)
             end
@@ -841,8 +857,14 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
     # TODO - make mass matrix a SciMLOperator so it can be updated with time. Default to IdentityOperator
     islin, isode = islinearfunction(f, alg)
     if f.jac_prototype isa AbstractSciMLOperator
-        W = make_WOperator(f, u, dt; iip=Val{IIP}())
-        J = W.J
+        J = deepcopy(f.jac_prototype)
+        # TODO: does this play nicely with time-state dependent mass matrix?
+        mass_matrix = if !isa(f.mass_matrix, Union{AbstractMatrix, UniformScaling})
+            convert(AbstractMatrix, f.mass_matrix)
+        else
+            f.mass_matrix
+        end
+        W = make_Wop(mass_matrix, dt, J, u; iip=Val{IIP}())
     elseif IIP && f.jac_prototype !== nothing && concrete_jac(alg) === nothing &&
            (alg.linsolve === nothing ||
             alg.linsolve !== nothing &&
@@ -862,7 +884,7 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
         jacvec = JacVec(UJacobianWrapper(_f, t, p), copy(u), p, t;
             autodiff = alg_autodiff(alg), tag = OrdinaryDiffEqTag())
         J = jacvec
-        W = make_WOperator(f.mass_matrix, dt, J, u, jacvec; iip=Val{IIP}())
+        W = make_Wop(f.mass_matrix, dt, J, u, jacvec; iip=Val{IIP}())
 
     elseif alg.linsolve !== nothing && !LinearSolve.needs_concrete_A(alg.linsolve) ||
            concrete_jac(alg) !== nothing && concrete_jac(alg)
@@ -877,14 +899,14 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
         end
         jacvec = JacVec(UJacobianWrapper(_f, t, p), copy(u), p, t;
             autodiff = alg_autodiff(alg), tag = OrdinaryDiffEqTag())
-        W = make_WOperator(f.mass_matrix, dt, J, u, jacvec; iip=Val{IIP}())
+        W = make_Wop(f.mass_matrix, dt, J, u, jacvec; iip=Val{IIP}())
 
     elseif islin || (!IIP && DiffEqBase.has_jac(f))
         J = islin ? (isode ? f.f : f.f1.f) : f.jac(uprev, p, t) # unwrap the Jacobian accordingly
         if !isa(J, AbstractSciMLOperator)
             J = MatrixOperator(J)
         end
-        W = make_WOperator(f.mass_matrix, dt, J, u; iip=Val{IIP}())
+        W = make_Wop(f.mass_matrix, dt, J, u; iip=Val{IIP}())
     else
         J = if f.jac_prototype === nothing
             ArrayInterface.undefmatrix(u)
@@ -901,7 +923,7 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
             if len !== nothing &&
                typeof(alg) <:
                Union{Rosenbrock23, Rodas4, Rodas4P, Rodas4P2, Rodas5, Rodas5P}
-                make_StaticWOperator(J, false)
+                make_static_Wop(J, false)
             else
                 ArrayInterface.lu_instance(J)
             end

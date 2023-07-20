@@ -177,7 +177,7 @@ function alg_cache(alg::Rosenbrock23, u, rate_prototype, ::Type{uEltypeNoUnits},
     uf = UDerivativeWrapper(f, t, p)
     J, W = build_J_W(alg, u, uprev, p, t, dt, f, uEltypeNoUnits, Val(false))
     linprob = nothing #LinearProblem(W,copy(u); u0=copy(u))
-    linsolve = nothing #init(linprob,alg.linsolve,alias_A=true,alias_b=true)
+    linsolve = nothing #init(linprob,alg.linsolve,alias_A=true,alias_b=true). # G: this isn't good.. .why?
     Rosenbrock23ConstantCache(constvalue(uBottomEltypeNoUnits), tf, uf, J, W, linsolve,
         alg_autodiff(alg))
 end
