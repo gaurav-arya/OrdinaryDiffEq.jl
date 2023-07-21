@@ -427,6 +427,7 @@ function make_Wop(mass_matrix, dtgamma, J, uprev; transform = false, iip)
     else
         cache_operator(_W, uprev)
     end
+    # todo: handle any compplications in sparse case
     return W
 end
 
