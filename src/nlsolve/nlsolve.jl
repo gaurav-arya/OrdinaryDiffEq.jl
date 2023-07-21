@@ -22,7 +22,7 @@ function nlsolve!(nlsolver::AbstractNLSolver, integrator::DiffEqBase.DEIntegrato
         else
             γW = nlsolver.γ * integrator.dt / nlsolver.α
         end
-        always_new || update_W!(nlsolver, integrator, cache, γW, repeat_step)
+        always_new || update_W!(nlsolver, integrator, cache, γW, repeat_step) # W updated within here...
     end
 
     @unpack maxiters, κ, fast_convergence_cutoff = nlsolver
@@ -45,7 +45,7 @@ function nlsolve!(nlsolver::AbstractNLSolver, integrator::DiffEqBase.DEIntegrato
 
         # compute next step and calculate norm of residuals
         iter > 1 && (ndzprev = ndz)
-        ndz = compute_step!(nlsolver, integrator)
+        ndz = compute_step!(nlsolver, integrator) # compute step called here
         if !isfinite(ndz)
             nlsolver.status = Divergence
             nlsolver.nfails += 1

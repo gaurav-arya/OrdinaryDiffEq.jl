@@ -652,7 +652,7 @@ function jacobian2W(mass_matrix::MT, dtgamma::Number, J::AbstractMatrix,
 end
 
 function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cache, dtgamma,
-    repeat_step, W_transform = false, newJW = nothing) # wow, W_transform can change here too?
+    repeat_step, W_transform = false, newJW = nothing) # G: wow, W_transform can change here too?
     @unpack t, dt, uprev, u, f, p = integrator
     lcache = nlsolver === nothing ? cache : nlsolver.cache
     next_step = is_always_new(nlsolver)
@@ -729,7 +729,7 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
     end
     if isnewton(nlsolver)
         # what's going on here? more complications from this Newton solver...
-        set_new_W!(nlsolver, new_W)
+        set_new_W!(nlsolver, new_W) #new_W is a boolean
         if new_jac && isdae
             set_W_γdt!(nlsolver, nlsolver.α * inv(dtgamma))
         elseif new_W && !isdae
@@ -833,7 +833,7 @@ function update_W!(nlsolver::AbstractNLSolver,
     repeat_step::Bool, newJW = nothing)
     if isnewton(nlsolver)
         calc_W!(get_W(nlsolver), integrator, nlsolver, cache, dtgamma, repeat_step, true,
-            newJW)
+            newJW) # calc_W called frrom newton solver here...
     end
     nothing
 end

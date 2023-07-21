@@ -104,7 +104,7 @@ end
 
     # update W
     if W isa AbstractSciMLOperator
-        update_coefficients!(W, ustep, p, tstep)
+        update_coefficients!(W, ustep, p, tstep; dtgamma, transform)
     end
 
     if integrator.opts.adaptive

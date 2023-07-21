@@ -487,7 +487,7 @@ end
         tmp[i] = uprev[i] + d * zprev[i]
     end
     nlsolver.c = γ
-    zᵧ .= nlsolve!(nlsolver, integrator, cache, repeat_step)
+    zᵧ .= nlsolve!(nlsolver, integrator, cache, repeat_step) # nlsolve called here
     nlsolvefail(nlsolver) && return
 
     ################################## Solve BDF2 Step
