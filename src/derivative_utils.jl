@@ -19,7 +19,7 @@ isinv(W::StaticWOperator{S}) where {S} = S
 Base.:\(W::StaticWOperator, v::AbstractArray) = isinv(W) ? W.W * v : W.W \ v
 
 function make_static_Wop(W, callinv = true)
-    if callinv
+    if callinv && (size(W, 1) <= ROSENBROCK_INV_CUTOFF)
         return inv(MatrixOperator(inv(W)))
     else
         return MatrixOperator(W)
