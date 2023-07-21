@@ -50,7 +50,7 @@ function _ode_addsteps!(k, t, uprev, u, dt, f, p,
 
         ### Jacobian does not need to be re-evaluated after an event
         ### Since it's unchanged
-        jacobian2W!(W, mass_matrix, γ, J, false)
+        jacobian2W!(W, mass_matrix, γ, J, false) # TODO: handle this
 
         linsolve = cache.linsolve
 

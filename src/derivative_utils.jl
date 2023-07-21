@@ -416,7 +416,6 @@ function calc_W_J!(W, J, integrator, nlsolver::Union{Nothing, AbstractNLSolver},
         uprev = integrator.u
     end
 
-    @unpack J = lcache
     isdae = integrator.alg isa DAEAlgorithm
     alg = unwrap_alg(integrator, true)
     if !isdae
@@ -461,14 +460,16 @@ function calc_W_J!(W, J, integrator, nlsolver::Union{Nothing, AbstractNLSolver},
 
     # calculate W
     @assert W isa AbstractSciMLOperator "W operator of unexpected type $(typeof(W)))"
-    # only update W here if solver is not newton, since we will call `update_coefficients!` in NLNewton.
-    isnewton(nlsolver) || update_coefficients!(W, uprev, p, t; dtgamma, transform=W_transform) 
+    # if there exists a concrete J, update it here
     if J !== nothing && !(J isa AbstractSciMLOperator)
         islin, isode = islinearfunction(integrator)
         islin ? (J = isode ? f.f : f.f1.f) :
         (new_jac && (calc_J!(J, integrator, lcache, next_step)))
-        new_W && !isdae &&
-            jacobian2W!(W._concrete_form, mass_matrix, dtgamma, J, W_transform)
+    end
+    # only update W here if solver is not newton, since we will call `update_coefficients!` in NLNewton.
+    # TODO: compare usage of new_W here v.s. in previous code
+    if !isnewton(nlsolver) && new_W
+        update_coefficients!(W, uprev, p, t; dtgamma, transform=W_transform) 
     end
     if isnewton(nlsolver)
         set_new_W!(nlsolver, new_W)
@@ -483,7 +484,7 @@ function calc_W_J!(W, J, integrator, nlsolver::Union{Nothing, AbstractNLSolver},
     return new_jac, new_W
 end
 
-@noinline function calc_W(integrator, nlsolver, dtgamma, repeat_step, W_transform = false) # TODO: make W_transform a Val?
+@noinline function calc_W(integrator, nlsolver, dtgamma, repeat_step, W_transform = false)
     @unpack t, uprev, p, f = integrator
 
     next_step = is_always_new(nlsolver)
