@@ -367,7 +367,7 @@ end
         return nothing
     end
 
-    k₁ = _reshape(W \ -_vec((integrator.fsalfirst + γ * dT)), axes(uprev))
+    k₁ = _reshape(W \ -_vec((integrator.fsalfirst + γ * dT)), axes(uprev)) # Rosenbrock23 inverts W here
     integrator.stats.nsolve += 1
     f₁ = f(uprev + dto2 * k₁, p, t + dto2)
     integrator.stats.nf += 1

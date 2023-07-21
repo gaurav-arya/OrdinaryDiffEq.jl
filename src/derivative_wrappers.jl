@@ -224,6 +224,7 @@ function jacobian_finitediff!(J, f, x, jac_config, integrator)
     2 * maximum(jac_config.colorvec))
 end
 
+# G: how can we encode this in the operator definition?
 function jacobian!(J::AbstractMatrix{<:Number}, f, x::AbstractArray{<:Number},
     fx::AbstractArray{<:Number}, integrator::DiffEqBase.DEIntegrator,
     jac_config)

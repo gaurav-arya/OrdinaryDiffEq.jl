@@ -64,7 +64,7 @@ Equations II, Springer Series in Computational Mathematics. ISBN
 
     # update W
     if W isa AbstractSciMLOperator
-        W = update_coefficients!(W, ustep, p, tstep)
+        W = update_coefficients!(W, ustep, p, tstep) # is this update needed? does it get reverted?
     end
 
     dz = _reshape(W \ _vec(ztmp), axes(ztmp))
@@ -104,7 +104,7 @@ end
 
     # update W
     if W isa AbstractSciMLOperator
-        update_coefficients!(W, ustep, p, tstep)
+        update_coefficients!(W, ustep, p, tstep; dtgamma, transform)
     end
 
     if integrator.opts.adaptive
