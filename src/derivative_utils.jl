@@ -190,7 +190,7 @@ function make_Wop(mass_matrix, dtgamma, J, uprev; transform = false, iip, concre
     #     error("Jacobian J is of unexpected type $(typeof(J))")
     # end
 
-    _W = -(mass_matrix - gamma_op * _J) * transform_op 
+    _W = -(mass_matrix - gamma_op * J) * transform_op 
     W = if isconvertible(J) || concrete
         ConcretizedOperator(_W) # TODO: handle any compplications in sparse case
     else
@@ -406,7 +406,7 @@ function jacobian2W(mass_matrix::MT, dtgamma::Number, J::AbstractMatrix,
     return W
 end
 
-function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cache, dtgamma,
+function calc_W_J!(W, J, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cache, dtgamma,
     repeat_step, W_transform = false, newJW = nothing)
     @unpack t, dt, uprev, u, f, p = integrator
     lcache = nlsolver === nothing ? cache : nlsolver.cache
@@ -460,30 +460,18 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
     end
 
     # calculate W
-    if W isa WOperator
-        isnewton(nlsolver) || update_coefficients!(W, uprev, p, t) # we will call `update_coefficients!` in NLNewton. Ok, this is a clue...
-        W.transform = W_transform
-        set_gamma!(W, dtgamma)
-        if W.J !== nothing && !(W.J isa AbstractSciMLOperator)
-            islin, isode = islinearfunction(integrator)
-            islin ? (J = isode ? f.f : f.f1.f) :
-            (new_jac && (calc_J!(W.J, integrator, lcache, next_step))) # G: how should this line manifest?
-            new_W && !isdae &&
-                jacobian2W!(W._concrete_form, mass_matrix, dtgamma, J, W_transform)
-        end
-    elseif W isa AbstractSciMLOperator
-        update_coefficients!(W, uprev, p, t; dtgamma, transform=W_transform)
-    else # concrete W using jacobian from `calc_J!`
-        # is this branch ever meant to be hit??
+    @assert W isa AbstractSciMLOperator "W operator of unexpected type $(typeof(W)))"
+    # only update W here if solver is not newton, since we will call `update_coefficients!` in NLNewton.
+    isnewton(nlsolver) || update_coefficients!(W, uprev, p, t; dtgamma, transform=W_transform) 
+    if J !== nothing && !(J isa AbstractSciMLOperator)
         islin, isode = islinearfunction(integrator)
         islin ? (J = isode ? f.f : f.f1.f) :
         (new_jac && (calc_J!(J, integrator, lcache, next_step)))
-        update_coefficients!(W, uprev, p, t)
-        new_W && !isdae && jacobian2W!(W, mass_matrix, dtgamma, J, W_transform)
+        new_W && !isdae &&
+            jacobian2W!(W._concrete_form, mass_matrix, dtgamma, J, W_transform)
     end
     if isnewton(nlsolver)
-        # what's going on here? more complications from this Newton solver...
-        set_new_W!(nlsolver, new_W) #new_W is a boolean
+        set_new_W!(nlsolver, new_W)
         if new_jac && isdae
             set_W_γdt!(nlsolver, nlsolver.α * inv(dtgamma))
         elseif new_W && !isdae
@@ -558,7 +546,7 @@ end
             end
         end
     end
-    (W isa WOperator && unwrap_alg(integrator, true) isa NewtonAlgorithm) &&
+    (unwrap_alg(integrator, true) isa NewtonAlgorithm) &&
         (W = update_coefficients!(W, uprev, p, t)) # we will call `update_coefficients!` in NLNewton
     is_compos && (integrator.eigen_est = isarray ? constvalue(opnorm(J, Inf)) :
                             integrator.opts.internalnorm(J, t))
@@ -571,7 +559,7 @@ function calc_rosenbrock_differentiation!(integrator, cache, dtd1, dtgamma, repe
     # we need to skip calculating `J` and `W` when a step is repeated
     new_jac = new_W = false
     if !repeat_step
-        new_jac, new_W = calc_W!(cache.W, integrator, nlsolver, cache, dtgamma, repeat_step,
+        new_jac, new_W = calc_W_J!(cache.W, cache.J, integrator, nlsolver, cache, dtgamma, repeat_step,
             W_transform)
     end
     # If the Jacobian is not updated, we won't have to update ∂/∂t either.
@@ -588,12 +576,14 @@ function update_W!(nlsolver::AbstractNLSolver,
     integrator::SciMLBase.DEIntegrator{<:Any, true}, cache, dtgamma,
     repeat_step::Bool, newJW = nothing)
     if isnewton(nlsolver)
-        calc_W!(get_W(nlsolver), integrator, nlsolver, cache, dtgamma, repeat_step, true,
-            newJW) # calc_W called frrom newton solver here...
+        # todo: newton solve stuff needs some updating...
+        calc_W_J!(get_W(nlsolver), integrator, nlsolver, cache, dtgamma, repeat_step, true,
+            newJW)
     end
     nothing
 end
 
+# todo: newton solve stuff needs some updating...
 function update_W!(nlsolver::AbstractNLSolver,
     integrator::SciMLBase.DEIntegrator{<:Any, false}, cache, dtgamma,
     repeat_step::Bool, newJW = nothing)
@@ -622,8 +612,8 @@ end
 
 function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
     ::Val{IIP}) where {IIP, uEltypeNoUnits, F}
-    # TODO - make J, W AbstractSciMLOperators (lazily defined with scimlops functionality)
-    # TODO - if jvp given, make it SciMLOperators.FunctionOperator <- G: do this in SciMLBase? maybe not, better to just wrap it here... 
+    # TODO - when making Jacobian a SciMLOperator, encode its updating behaviour within its update_func rather than separately/implicitly
+    # (currently, if J is an AbstractMatrix, we will update it manually and J_op implicitly depends on it.)
     # TODO - make mass matrix a SciMLOperator so it can be updated with time. Default to IdentityOperator
     islin, isode = islinearfunction(f, alg)
     if f.jac_prototype isa AbstractSciMLOperator
@@ -666,14 +656,14 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
         W = make_Wop(f.mass_matrix, dt, J_op, u; iip=Val{IIP}())
 
     elseif islin || (!IIP && DiffEqBase.has_jac(f))
-        # The problem is either linear or OOP with a provided Jacobian.
-        _J = islin ? (isode ? f.f : f.f1.f) : f.jac(uprev, p, t) # unwrap the Jacobian accordingly
-        J = if !isa(J, AbstractSciMLOperator)
+        # The ODE function is either linear or OOP with a provided Jacobian.
+        J = islin ? (isode ? f.f : f.f1.f) : f.jac(uprev, p, t) # unwrap the Jacobian accordingly
+        J_op = if !isa(J, AbstractSciMLOperator)
             MatrixOperator(_J; update_func=f.jac)
         else
-            _J
+            J
         end
-        W = make_Wop(f.mass_matrix, dt, J, u; iip=Val{IIP}())
+        W = make_Wop(f.mass_matrix, dt, J_op, u; iip=Val{IIP}())
     else
         # Make static placeholders for J and W 
         J = if f.jac_prototype === nothing
@@ -704,21 +694,23 @@ end
 build_uf(alg, nf, t, p, ::Val{true}) = UJacobianWrapper(nf, t, p)
 build_uf(alg, nf, t, p, ::Val{false}) = UDerivativeWrapper(nf, t, p)
 
-function LinearSolve.init_cacheval(alg::LinearSolve.DefaultLinearSolver, A::WOperator, b, u,
-    Pl, Pr,
-    maxiters::Int, abstol, reltol, verbose::Bool,
-    assumptions::OperatorAssumptions)
-    LinearSolve.init_cacheval(alg, A.J, b, u, Pl, Pr,
-        maxiters::Int, abstol, reltol, verbose::Bool,
-        assumptions::OperatorAssumptions)
-end
+# TODO: any of this logic below still relevant for SciMLOp W?
 
-for alg in InteractiveUtils.subtypes(OrdinaryDiffEq.LinearSolve.AbstractFactorization)
-    @eval function LinearSolve.init_cacheval(alg::$alg, A::WOperator, b, u, Pl, Pr,
-        maxiters::Int, abstol, reltol, verbose::Bool,
-        assumptions::OperatorAssumptions)
-        LinearSolve.init_cacheval(alg, A.J, b, u, Pl, Pr,
-            maxiters::Int, abstol, reltol, verbose::Bool,
-            assumptions::OperatorAssumptions)
-    end
-end
+# function LinearSolve.init_cacheval(alg::LinearSolve.DefaultLinearSolver, A::WOperator, b, u,
+#     Pl, Pr,
+#     maxiters::Int, abstol, reltol, verbose::Bool,
+#     assumptions::OperatorAssumptions)
+#     LinearSolve.init_cacheval(alg, A.J, b, u, Pl, Pr,
+#         maxiters::Int, abstol, reltol, verbose::Bool,
+#         assumptions::OperatorAssumptions)
+# end
+
+# for alg in InteractiveUtils.subtypes(OrdinaryDiffEq.LinearSolve.AbstractFactorization)
+#     @eval function LinearSolve.init_cacheval(alg::$alg, A::WOperator, b, u, Pl, Pr,
+#         maxiters::Int, abstol, reltol, verbose::Bool,
+#         assumptions::OperatorAssumptions)
+#         LinearSolve.init_cacheval(alg, A.J, b, u, Pl, Pr,
+#             maxiters::Int, abstol, reltol, verbose::Bool,
+#             assumptions::OperatorAssumptions)
+#     end
+# end

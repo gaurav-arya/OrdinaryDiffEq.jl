@@ -1,6 +1,7 @@
 using OrdinaryDiffEq: WOperator, set_gamma!, calc_W, calc_W!
 using OrdinaryDiffEq, LinearAlgebra, SparseArrays, Random, Test, LinearSolve
 
+# TODO: this test will need updating
 @testset "calc_W and calc_W!" begin
     A = [-1.0 0.0; 0.0 -0.5]
     mm = [2.0 0.0; 0.0 1.0]
