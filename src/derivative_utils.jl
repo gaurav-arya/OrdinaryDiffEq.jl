@@ -1,23 +1,5 @@
 const ROSENBROCK_INV_CUTOFF = 7 # https://github.com/SciML/OrdinaryDiffEq.jl/pull/1539
 
-struct StaticWOperator{isinv, T} <: AbstractSciMLOperator{T}
-    W::T
-    function StaticWOperator(W::T, callinv = true) where {T}
-        isinv = size(W, 1) <= ROSENBROCK_INV_CUTOFF
-
-        # when constructing W for the first time for the type
-        # inv(W) can be singular
-        _W = if isinv && callinv
-            inv(W)
-        else
-            W
-        end
-        new{isinv, T}(_W)
-    end
-end
-isinv(W::StaticWOperator{S}) where {S} = S
-Base.:\(W::StaticWOperator, v::AbstractArray) = isinv(W) ? W.W * v : W.W \ v
-
 function make_static_Wop(W, callinv = true)
     if callinv && (size(W, 1) <= ROSENBROCK_INV_CUTOFF)
         return inv(MatrixOperator(inv(W)))
