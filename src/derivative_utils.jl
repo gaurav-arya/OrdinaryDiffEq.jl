@@ -421,8 +421,12 @@ function make_Wop(mass_matrix, dtgamma, J, uprev; transform = false, iip)
     else
         error("Jacobian J is of unexpected type $(typeof(J))")
     end
-    W2 = -(mass_matrix - gamma_op * _J) * transform_op 
-    W = cache_operator(W2, uprev)
+    _W = -(mass_matrix - gamma_op * _J) * transform_op 
+    W = if isconvertible(J)
+        ConcretizedOperator(_W)
+    else
+        cache_operator(_W, uprev)
+    end
     return W
 end
 
@@ -687,7 +691,6 @@ function calc_W!(W, integrator, nlsolver::Union{Nothing, AbstractNLSolver}, cach
     end
 
     # calculate W
-    # @show isnewton(nlsolver)
     if W isa WOperator
         isnewton(nlsolver) || update_coefficients!(W, uprev, p, t) # we will call `update_coefficients!` in NLNewton. Ok, this is a clue...
         W.transform = W_transform
