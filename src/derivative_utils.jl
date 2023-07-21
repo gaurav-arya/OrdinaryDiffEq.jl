@@ -18,7 +18,13 @@ end
 isinv(W::StaticWOperator{S}) where {S} = S
 Base.:\(W::StaticWOperator, v::AbstractArray) = isinv(W) ? W.W * v : W.W \ v
 
-make_static_Wop(W, callinv = true) = StaticWOperator(W, callinv)
+function make_static_Wop(W, callinv = true)
+    if callinv
+        return inv(MatrixOperator(inv(W)))
+    else
+        return MatrixOperator(W)
+    end
+end
 
 function calc_tderivative!(integrator, cache, dtd1, repeat_step)
     @inbounds begin
@@ -790,7 +796,7 @@ end
             elseif len !== nothing &&
                    typeof(integrator.alg) <:
                    Union{Rosenbrock23, Rodas4, Rodas4P, Rodas4P2, Rodas5, Rodas5P}
-                make_static_Wop(W_full)
+                make_static_Wop(W_full) # G: makes a new static W operator with the true dense W 
             else
                 DiffEqBase.default_factorize(W_full)
             end
@@ -916,6 +922,7 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
         end
         W = make_Wop(f.mass_matrix, dt, J, u; iip=Val{IIP}())
     else
+        # G: in this branch, we make static placeholders for J and W 
         J = if f.jac_prototype === nothing
             ArrayInterface.undefmatrix(u)
         else
@@ -931,7 +938,7 @@ function build_J_W(alg, u, uprev, p, t, dt, f::F, ::Type{uEltypeNoUnits},
             if len !== nothing &&
                typeof(alg) <:
                Union{Rosenbrock23, Rodas4, Rodas4P, Rodas4P2, Rodas5, Rodas5P}
-                make_static_Wop(J, false)
+                make_static_Wop(J, false) # G: so J is a placeholder here with the right structure?
             else
                 ArrayInterface.lu_instance(J)
             end
